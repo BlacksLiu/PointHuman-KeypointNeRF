@@ -1,0 +1,19 @@
+
+train command:
+
+CUDA_VISIBLE_DEVICES=1 python train.py --config ./configs/thuman2.json --data_root ./data/thuman2
+
+tensorboard visualize command:
+tensorboard --logdir ./EXPERIMENTS/thuman2/version_0/
+
+test command:
+
+if set test datset, go to pointhuman_dataset.from_config
+then, run the following command
+CUDA_VISIBLE_DEVICES=0 python train.py --config ./configs/thuman2.json --data_root ./data/thuman2 --run_val
+CUDA_VISIBLE_DEVICES=0 python train.py --config ./configs/thuman2.json --data_root ./data/zju_mocap --run_val
+CUDA_VISIBLE_DEVICES=0 python train.py --config ./configs/thuman2.json --data_root ./data/h36m  --run_val
+
+
+
+

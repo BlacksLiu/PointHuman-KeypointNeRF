@@ -16,6 +16,9 @@ import torch
 import kornia as K
 import numpy as np
 import pytorch_lightning
+import imageio
+from PIL import Image
+import os.path as osp
 
 from kornia.utils import tensor_to_image
 from pytorch_lightning.utilities.apply_func import move_data_to_device
@@ -24,6 +27,7 @@ from .utils import *
 from . import zju_evaluator
 from .spatial import SpatialEncoder
 from .zju_dataset import ZJUDataset
+from .pointhuman_dataset import PointHumanDataset
 
 class KeypointNeRFLightningModule(pytorch_lightning.LightningModule):
     def __init__(self, cfg: dict, cfg_model: dict):
@@ -34,13 +38,19 @@ class KeypointNeRFLightningModule(pytorch_lightning.LightningModule):
         self.expname = cfg['expname']
         self.save_dir = f'{cfg["out_dir"]}/{cfg["expname"]}'
         self.save_hyperparameters()
-        self.dataset = ZJUDataset
+        # self.dataset = ZJUDataset
+        self.dataset = PointHumanDataset
         self.video_dirname = 'video3'
         self.images_dirname = 'images'
         self.test_dst_name = 'v3'
 
         self.model = KeypointNeRF(self.cfg)
-        self.znear, self.zfar = 2.0, 5.0
+        # Important!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # Original value only supports to Zjumocap.
+        # We change it to support code of PointHuman.
+        # self.znear, self.zfar = 2.0, 5.0
+        # self.znear, self.zfar = 0.5, 3.5 # used to train model on thuman2
+        self.znear, self.zfar = 0.5, 5.0
         self.zju_evaluator = zju_evaluator.ZJUEvaluator()
 
     def configure_optimizers(self):
@@ -78,7 +88,8 @@ class KeypointNeRFLightningModule(pytorch_lightning.LightningModule):
             test_dataset,
             shuffle=False,
             num_workers=self.cfg['training'].get('val_num_workers', 0),
-            batch_size=self.cfg['training'].get('val_batch_size', 1) if batch_size is None else batch_size,
+            # batch_size=self.cfg['training'].get('val_batch_size', 1) if batch_size is None else batch_size,
+            batch_size=1,
             collate_fn=self.collate_fn,
             pin_memory=True,
         )
@@ -534,21 +545,51 @@ class KeypointNeRFLightningModule(pytorch_lightning.LightningModule):
         nerf_level = max(0, int(math.log(tr_batch['im'].shape[-2], 2)) - 5)
         out_nerf = self.render_full_nerf_image(tr_batch, nerf_level)
         rendered_image = out_nerf["tex_fg_fine"].clamp(min=0.0, max=1.0)  # 3, H, W
-        human_idx = str(batch['human_idx'].item())
-        frame_index = str(batch['frame_index'].item())
-        view_index = str(batch['cam_ind'].item())
+        # human_idx = str(batch['human_idx'].item())
+        # frame_index = str(batch['frame_index'].item())
+        # view_index = str(batch['cam_ind'].item())
         # print('Processing:', human_idx, frame_index, view_index)
-        scores = self.zju_evaluator.compute_score(
-            rendered_image,
-            tr_batch['dr_data']['tar'],
-            input_imgs=tr_batch['im'],
-            mask_at_box=tr_batch['dr_data']['mask_at_box'],
-            human_idx=human_idx,
-            frame_index=frame_index,
-            view_index=view_index
+        # scores = self.zju_evaluator.compute_score(
+        #     rendered_image,
+        #     tr_batch['dr_data']['tar'],
+        #     input_imgs=tr_batch['im'],
+        #     mask_at_box=tr_batch['dr_data']['mask_at_box'],
+        #     human_idx=human_idx,
+        #     frame_index=frame_index,
+        #     view_index=view_index
+        # )
+        # scores = {key: torch.tensor(val) for key, val in scores.items()}
+
+        # save visualization images and videos
+        dataset_name = osp.basename(self.cfg['dataset']['data_root'])
+        scan_id = batch['scan_id'][0]
+        ref_views = batch['ref_views'][0]
+        tgt_view = batch['tgt_view'][0]
+        output_folder = osp.join(
+            self.save_dir, "test_vis", dataset_name,
+            scan_id, ref_views
         )
-        scores = {key: torch.tensor(val) for key, val in scores.items()}
-        return scores
+        os.makedirs(output_folder, exist_ok=True)
+        if not hasattr(self, "last_output_folder")\
+            or self.last_output_folder != output_folder:
+            if hasattr(self, "video_writter")\
+                and self.video_writter is not None:
+                self.video_writter.close()
+            self.video_writter = imageio.get_writer(
+                osp.join(output_folder, "render.mp4"),
+                fps=5,
+            )
+            self.last_output_folder = output_folder
+        target_img = tr_batch['dr_data']['tar'][0].permute(1, 2, 0).cpu().numpy()
+        render_img = rendered_image.permute(1, 2, 0).cpu().numpy()
+
+        result_img = np.concatenate([target_img, render_img], axis=1)
+        result_img = (result_img * 255).astype(np.uint8)
+        Image.fromarray(result_img, "RGB").save(
+            osp.join(output_folder, f"{tgt_view}.png"))
+        self.video_writter.append_data(result_img)
+        # return scores
+        return {}
 
     def validation_epoch_end(self, outputs):
         for key in outputs[0].keys():

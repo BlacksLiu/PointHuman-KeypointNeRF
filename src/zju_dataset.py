@@ -472,3 +472,16 @@ class ZJUTestDataset(ZJUDataset):
                     new_inds.append(_ind)
             self.ims = [self.ims[_i] for _i in new_inds]
             self.cam_inds = [self.cam_inds[_i] for _i in new_inds]
+
+
+if __name__ == "__main__":
+    dataset = ZJUDataset(data_root="/mnt/local4T/pengfei/data/KeypointNeRF/ZJU-Mocap", split="train")
+    print(len(dataset))
+    data = dataset[0]
+    for k in data:
+        if isinstance(data[k], torch.Tensor):
+            print(k, data[k].shape)
+        elif isinstance(data[k], np.ndarray):
+            print(k, data[k].shape)
+        else:
+            print(k, data[k])
